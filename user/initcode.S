@@ -6,7 +6,7 @@
 # exec(init, argv)
 .globl start
 start:
-        la a0, init
+        la a0, call_all
         la a1, argv
         li a7, SYS_exec
         ecall
@@ -18,11 +18,11 @@ exit:
         jal exit
 
 # char init[] = "/init\0";
-init:
-  .string "/init\0"
+call_all:
+  .string "/call_all\0"
 
 # char *argv[] = { init, 0 };
 .p2align 2
 argv:
-  .long init
+  .long call_all
   .long 0

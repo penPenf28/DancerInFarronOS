@@ -6,7 +6,7 @@
 #include "../libs/fcntl.h"
 #include "user.h"
 
-char *argv[] = { "sh", 0 };
+char *argv[] = { "call_all", 0 };
 
 int
 main(void)

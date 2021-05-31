@@ -53,7 +53,7 @@ int main(){
         "/yield"
     };
 
-    int wpid;
+    //int wpid;
     char* argv[]={"",0};
     //char* argv1[]={"sh",0};
     int i=0;
@@ -64,20 +64,20 @@ int main(){
             exec(argv[0],argv);
             return 0;
         }
-        for(;;){
-            // this call to wait() returns if the shell exits,
-            // or if a parentless process exits.
-            wpid = wait((int *) 0);
-            if(wpid == pid){
-                // the shell exited; restart it
-                break;
-            } else if(wpid < 0){
-                //printf("init: wait returned an error\n");
-                exit(1);
-            } else {
-                // it was a parentless process; do nothing.
-            }
-        }
+        // for(;;){
+        //     // this call to wait() returns if the shell exits,
+        //     // or if a parentless process exits.
+        //     wpid = wait((int *) 0);
+        //     if(wpid == pid){
+        //         // the shell exited; restart it
+        //         break;
+        //     } else if(wpid < 0){
+        //         //printf("init: wait returned an error\n");
+        //         exit(1);
+        //     } else {
+        //         // it was a parentless process; do nothing.
+        //     }
+        // }
 
     }
     // int pid=fork();
