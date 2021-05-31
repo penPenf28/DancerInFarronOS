@@ -273,32 +273,221 @@ DANCERINFARRONOS
 ​	操作系统提供了文件系统来从可持久保存的存储介质（磁盘， SSD 等，以后以硬盘来代表）中取数据和代码到内存中，并可以把内存中的数据写回到硬盘上。硬盘在这里是外设，具有持久性，以文件系统的形式呈现给应用程序。
 
 
+## 5 进程与中断
+### 5.1 进程与中断原理
+#### 5.1.1 进程
+​ 一个进程就是一个正在执行程序的实例，包括程序计数器、寄存器和变量的当前值。在多道程序设计系统中，CPU在各个进程之间快速切换，宏观上看一段时间内许多进程共同运行，实际上在一个给定瞬间一个CPU对应只有一个进程在运行。
+  在操作系统原理中，一个完整的进程都不可或缺的拥有以下三态：就绪态，执行态，阻塞态。进程一旦创建起来之后，首先进入的状态是就绪态，然后通过进程调度来占有CPU进入执行态。（假如只有一个CPU，则同一时刻只有一个进程能够占有CPU。）进程在运行过程当中若要进行I/O请求，如访问网卡、串口（从串口读取数据，此时串口没有数据可读）等时，则进程会进入阻塞态，等串口有数据并将数据读完(I/O完成)，进程又会跳回就绪态。整个过程为进程的基本流程。
+  在操作系统中，触发任何一个事件，系统都会将它定义成一个进程，并其给这个进程一个ID，称为PID，同时根据启动这个进程的用户与相关属性关系，给这个PID一组有效的权限设置，这个PID 能在系统上进行的动作与PID的权限有关了。
 
-
-## 5 中断与中断
-### 5.1 中断与进程原理
-
-
-
-
+#### 5.1.2 中断
+​ 中断通常被定义为一个事件，该事件能够改变处理器执行指令的顺序。这样的事件与 CPU 芯片内外部硬件电路产生的电信号相对应。
+    中断分为同步中断和异步中断。同步中断是当指令执行时由 控制单元产生的，之所以称为同步，是因为只有在一条指令终止执行后CPU才会发出中断，异步中断是由其他硬件设备依照CPU时钟信号随机 产生的。通常我们所说的中断指的是异步中断，我们将同步中断称为异常。
 
 ### 5.2 相关代码文件及解释
+​ 在trap处理的基础上，kernel/syscall.c维护着系统调用的入口向量表,kernel/syscall.c中的syscall()根据传入的系统调用号调用对应的处理函数,
+```
+syscall(void)     //根据传入的系统调用号调用对应的处理函数
+{
+  int num;
+  struct proc *p = myproc();
 
+  num = p->trapframe->a7;
+  if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+    p->trapframe->a0 = syscalls[num]();
+        // trace
+    if ((p->tmask & (1 << num)) != 0) {
+      printf("pid %d: %s -> %d\n", p->pid, sysnames[num], p->trapframe->a0);
+    }
+  } else {
+    printf("pid %d %s: unknown sys call %d\n",
+            p->pid, p->name, num);
+    p->trapframe->a0 = -1;
+  }
+}
+```
+​usertrap()判断这是一个Syscall，并调用syscall()函数。
+```
+usertrap(void)
+{
+  // printf("run in usertrap\n");
+  int which_dev = 0;
 
+  if((r_sstatus() & SSTATUS_SPP) != 0)
+    panic("usertrap: not from user mode");
 
+//向内核发送中断和异常
+  w_stvec((uint64)kernelvec);
 
+  struct proc *p = myproc();
+
+  //保存用户程序计数器
+  p->trapframe->epc = r_sepc();
+
+  if(r_scause() == 8){
+    if(p->killed)
+      exit(-1);
+    p->trapframe->epc += 4;
+    intr_on();
+    syscall();
+  } 
+  else if((which_dev = devintr()) != 0){
+  } 
+  else {
+    printf("\nusertrap(): unexpected scause %p pid=%d %s\n", r_scause(), p->pid, p->name);
+    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+    p->killed = 1;
+  }
+
+  if(p->killed)
+    exit(-1);
+
+  if(which_dev == 2)
+    yield();
+
+  usertrapret();
+}
+```
+​xv6在进程调度中主要通过切换context上下文结构进行:
+```
+struct context {
+  uint edi;
+  uint esi;
+  uint ebx;
+  uint ebp;
+  uint eip;
+};
+```
+​xv6进程控制操作主要有：
+ exec：执行
+ fork：克隆
+ wait：等待
+ exit：退出
+​xv6-k210的进程上下文切换swtch.S负责保存当前上下文并且载入进程的上下文。
+```
+.globl swtch
+swtch:
+        sd ra, 0(a0)
+        sd sp, 8(a0)
+        sd s0, 16(a0)
+        sd s1, 24(a0)
+        sd s2, 32(a0)
+        sd s3, 40(a0)
+        sd s4, 48(a0)
+        sd s5, 56(a0)
+        sd s6, 64(a0)
+        sd s7, 72(a0)
+        sd s8, 80(a0)
+        sd s9, 88(a0)
+        sd s10, 96(a0)
+        sd s11, 104(a0)
+
+        ld ra, 0(a1)
+        ld sp, 8(a1)
+        ld s0, 16(a1)
+        ld s1, 24(a1)
+        ld s2, 32(a1)
+        ld s3, 40(a1)
+        ld s4, 48(a1)
+        ld s5, 56(a1)
+        ld s6, 64(a1)
+        ld s7, 72(a1)
+        ld s8, 80(a1)
+        ld s9, 88(a1)
+        ld s10, 96(a1)
+        ld s11, 104(a1)
+
+        ret
+```
+​调度器线程仅仅是简单地进行轮转调度，一旦找到就绪线程便切换到新的线程。
+```
+void
+scheduler(void)
+{
+  struct proc *p;
+
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+
+    // Loop over process table looking for process to run.
+    acquire(&ptable.lock);
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+      proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+      swtch(&cpu->scheduler, p->context);
+      switchkvm();
+      proc = 0;
+    }
+    release(&ptable.lock);
+
+  }
+}
+```
+​进程表的锁总是由旧进程获得，新进程释放，这样做的原因是为了保护进程切换能够正常进行。
+```
+sched(void) 
+{
+  int intena;
+
+  if(!holding(&ptable.lock))
+    panic("sched ptable.lock");
+  if(cpu->ncli != 1)
+    panic("sched locks");
+  if(proc->state == RUNNING)
+    panic("sched running");
+  if(readeflags()&FL_IF)
+    panic("sched interruptible");
+  intena = cpu->intena;
+  swtch(&proc->context, cpu->scheduler);
+  cpu->intena = intena;
+}
+void
+yield(void)
+{
+  acquire(&ptable.lock);  //DOC: yieldlock
+  proc->state = RUNNABLE;
+  sched();
+  release(&ptable.lock);
+}
+```
 
 
 ## 6 内存管理
 ### 6.1 内存管理原理
 
+​	用户程序如果需要运行，则需要加载到内存执行。这就要求我们对进程的内存空间进行管理。
 
+​	用户程序装入内存的方式有连续性分配和离散型分配。连续性分配方式在操作系统发展的早期被广泛应用，但是随着系统的发展，连续方式的许多问题也暴露出来，比如连续方式会产生许多的“碎片”降低了内存空间的有效利用率。所以一种离散分配方式，分页存储管理方式就应运而生了，其可以大大提高内存利用率。
 
+​	在分页系统中，允许将进程的各个页离散地存储在内存的任一个物理块中，为了保证进程仍然能够正常运行，即能在内存中找到每个页面所对应的物理块。系统为每个进程建立了一张页表。即页表是操作系统用来为每个进程提供专有地址空间和内存的一种机制。页表的存在使得操作系统能够隔离不同进程的地址空间以及将一块物理内存复用为多个虚拟地址空间。
 
+​	页表在内存中连续存放，且每个进程都有一个自己的页表，页表始址和长度一般存放在进程的PCB中。这里插入一句，用户的每个进程的逻辑地址都是从0开始的。页表由许多的页表项组成，每一个页表项除了包含程序逻辑地址在物理地址中的映射，还包含一个存取控制字段，用于对该存储块内的内容加以保护。由于地址的转换几乎在每条指令都存在，所以地址变换是需要硬件实现来提高系统运行速度。系统中设置有一个页表寄存器（Page-Table Register），其存放进程的页表始址和长度。当程序需要寻址时，通过地址变换机构，将逻辑地址的高位（即页号）和页号与页表项长度的乘积与页表始址相加，得到在页表中的位置，并判断是否越界，若未越界，则将对应的物理页号地址和逻辑地址的低位（页内偏移地址）送入物理地址寄存器中。从而将程序的逻辑地址，映射为物理地址。
+
+​	除了每个进程的页表外，系统还有一个单独的页表描述内核的地址空间。内核配置其地址空间的布局，以使其能够以可预测的虚拟地址访问物理内存和各种硬件资源。
+
+​	接下来介绍一下，什么是进程地址空间。每个进程都有一个单独的页表，并且xv6在进程之间切换时，它也会切换对应的页表。如下图所示，进程的用户内存从虚拟地址0开始，以内存容量为最大。当进程向内核请求内存时，内核应该首先分配物理页面，然后将页表项添加到对应的页表中，该页表指向新的物理页。内核在这些页表项中设置各种控制位。大多数进程是不会占用整个用户地址空间的。
+
+![栈布局](./pic/栈布局.png)
+
+​	由上图可以看到正在执行的进程的用户内存布局。堆栈是一个单独的页面，包含了有exec创建时的初始内容。包含命令行参数以及它们的指针数组的字符串位于堆栈的最顶端。为了检测用户堆栈是否溢出已分配的堆栈内存，操作系统在堆栈的正下方放置了一个无效的保护页。如果用户堆栈溢出，并且该进程尝试使用堆栈下面的地址，则硬件将引发页面错误异常（page fault exception)，因为该映射无效。实际的操作系统可能会在用户堆栈溢出时自动为其分配更多的内存。
 
 ### 6.2 相关代码文件及解释
 
+kalloc.c文件：完成用户进程，内核堆栈以及管道缓冲区的物理内存分配。一个页代表4个字节。
 
+exec.c 文件：加载程序段到页表
+
+该程序首先在没有旧的用户空间的情况下，复制   ，然后检查ELF的文件头，若无错误的话，就将程序加载到内存中。
+
+加载完成后，在下一个页的边界后，分配两个页，使用第二个也作为用户堆栈。
 
 
 
