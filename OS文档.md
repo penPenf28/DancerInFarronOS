@@ -273,20 +273,191 @@ DANCERINFARRONOS
 ​	操作系统提供了文件系统来从可持久保存的存储介质（磁盘， SSD 等，以后以硬盘来代表）中取数据和代码到内存中，并可以把内存中的数据写回到硬盘上。硬盘在这里是外设，具有持久性，以文件系统的形式呈现给应用程序。
 
 
+## 5 进程与中断
+### 5.1 进程与中断原理
+#### 5.1.1 进程
+​ 一个进程就是一个正在执行程序的实例，包括程序计数器、寄存器和变量的当前值。在多道程序设计系统中，CPU在各个进程之间快速切换，宏观上看一段时间内许多进程共同运行，实际上在一个给定瞬间一个CPU对应只有一个进程在运行。
+  在操作系统原理中，一个完整的进程都不可或缺的拥有以下三态：就绪态，执行态，阻塞态。进程一旦创建起来之后，首先进入的状态是就绪态，然后通过进程调度来占有CPU进入执行态。（假如只有一个CPU，则同一时刻只有一个进程能够占有CPU。）进程在运行过程当中若要进行I/O请求，如访问网卡、串口（从串口读取数据，此时串口没有数据可读）等时，则进程会进入阻塞态，等串口有数据并将数据读完(I/O完成)，进程又会跳回就绪态。整个过程为进程的基本流程。
+  在操作系统中，触发任何一个事件，系统都会将它定义成一个进程，并其给这个进程一个ID，称为PID，同时根据启动这个进程的用户与相关属性关系，给这个PID一组有效的权限设置，这个PID 能在系统上进行的动作与PID的权限有关了。
 
-
-## 5 中断与中断
-### 5.1 中断与进程原理
-
-
-
-
+#### 5.1.2 中断
+​ 中断通常被定义为一个事件，该事件能够改变处理器执行指令的顺序。这样的事件与 CPU 芯片内外部硬件电路产生的电信号相对应。
+    中断分为同步中断和异步中断。同步中断是当指令执行时由 控制单元产生的，之所以称为同步，是因为只有在一条指令终止执行后CPU才会发出中断，异步中断是由其他硬件设备依照CPU时钟信号随机 产生的。通常我们所说的中断指的是异步中断，我们将同步中断称为异常。
 
 ### 5.2 相关代码文件及解释
+​ 在trap处理的基础上，kernel/syscall.c维护着系统调用的入口向量表,kernel/syscall.c中的syscall()根据传入的系统调用号调用对应的处理函数,
+```
+syscall(void)     //根据传入的系统调用号调用对应的处理函数
+{
+  int num;
+  struct proc *p = myproc();
 
+  num = p->trapframe->a7;
+  if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+    p->trapframe->a0 = syscalls[num]();
+        // trace
+    if ((p->tmask & (1 << num)) != 0) {
+      printf("pid %d: %s -> %d\n", p->pid, sysnames[num], p->trapframe->a0);
+    }
+  } else {
+    printf("pid %d %s: unknown sys call %d\n",
+            p->pid, p->name, num);
+    p->trapframe->a0 = -1;
+  }
+}
+```
+​usertrap()判断这是一个Syscall，并调用syscall()函数。
+```
+usertrap(void)
+{
+  // printf("run in usertrap\n");
+  int which_dev = 0;
 
+  if((r_sstatus() & SSTATUS_SPP) != 0)
+    panic("usertrap: not from user mode");
 
+//向内核发送中断和异常
+  w_stvec((uint64)kernelvec);
 
+  struct proc *p = myproc();
+
+  //保存用户程序计数器
+  p->trapframe->epc = r_sepc();
+
+  if(r_scause() == 8){
+    if(p->killed)
+      exit(-1);
+    p->trapframe->epc += 4;
+    intr_on();
+    syscall();
+  } 
+  else if((which_dev = devintr()) != 0){
+  } 
+  else {
+    printf("\nusertrap(): unexpected scause %p pid=%d %s\n", r_scause(), p->pid, p->name);
+    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+    p->killed = 1;
+  }
+
+  if(p->killed)
+    exit(-1);
+
+  if(which_dev == 2)
+    yield();
+
+  usertrapret();
+}
+```
+​xv6在进程调度中主要通过切换context上下文结构进行:
+```
+struct context {
+  uint edi;
+  uint esi;
+  uint ebx;
+  uint ebp;
+  uint eip;
+};
+```
+​xv6进程控制操作主要有：
+ exec：执行
+ fork：克隆
+ wait：等待
+ exit：退出
+​xv6-k210的进程上下文切换swtch.S负责保存当前上下文并且载入进程的上下文。
+```
+.globl swtch
+swtch:
+        sd ra, 0(a0)
+        sd sp, 8(a0)
+        sd s0, 16(a0)
+        sd s1, 24(a0)
+        sd s2, 32(a0)
+        sd s3, 40(a0)
+        sd s4, 48(a0)
+        sd s5, 56(a0)
+        sd s6, 64(a0)
+        sd s7, 72(a0)
+        sd s8, 80(a0)
+        sd s9, 88(a0)
+        sd s10, 96(a0)
+        sd s11, 104(a0)
+
+        ld ra, 0(a1)
+        ld sp, 8(a1)
+        ld s0, 16(a1)
+        ld s1, 24(a1)
+        ld s2, 32(a1)
+        ld s3, 40(a1)
+        ld s4, 48(a1)
+        ld s5, 56(a1)
+        ld s6, 64(a1)
+        ld s7, 72(a1)
+        ld s8, 80(a1)
+        ld s9, 88(a1)
+        ld s10, 96(a1)
+        ld s11, 104(a1)
+
+        ret
+```
+​调度器线程仅仅是简单地进行轮转调度，一旦找到就绪线程便切换到新的线程。
+```
+void
+scheduler(void)
+{
+  struct proc *p;
+
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+
+    // Loop over process table looking for process to run.
+    acquire(&ptable.lock);
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+      proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+      swtch(&cpu->scheduler, p->context);
+      switchkvm();
+      proc = 0;
+    }
+    release(&ptable.lock);
+
+  }
+}
+```
+​进程表的锁总是由旧进程获得，新进程释放，这样做的原因是为了保护进程切换能够正常进行。
+```
+sched(void) 
+{
+  int intena;
+
+  if(!holding(&ptable.lock))
+    panic("sched ptable.lock");
+  if(cpu->ncli != 1)
+    panic("sched locks");
+  if(proc->state == RUNNING)
+    panic("sched running");
+  if(readeflags()&FL_IF)
+    panic("sched interruptible");
+  intena = cpu->intena;
+  swtch(&proc->context, cpu->scheduler);
+  cpu->intena = intena;
+}
+void
+yield(void)
+{
+  acquire(&ptable.lock);  //DOC: yieldlock
+  proc->state = RUNNABLE;
+  sched();
+  release(&ptable.lock);
+}
+```
 
 
 ## 6 内存管理
